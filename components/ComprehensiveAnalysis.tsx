@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { PromptTemplates, ComprehensiveAnalysisResult, KeywordAnalysis } from '../types';
-import { performComprehensiveAnalysis } from '../services/siliconflowService';
+import { performComprehensiveAnalysis, explainTermInKeyword } from '../services/siliconflowService';
 import { LoadingIcon, PlayIcon, UploadIcon } from './Icons';
 
 interface ComprehensiveAnalysisProps {
@@ -20,6 +20,13 @@ const ComprehensiveAnalysis: React.FC<ComprehensiveAnalysisProps> = ({ apiKey, m
   const [analysisResult, setAnalysisResult] = useState<ComprehensiveAnalysisResult | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Term explanation states
+  const [showTermDialog, setShowTermDialog] = useState(false);
+  const [currentKeywordForTerm, setCurrentKeywordForTerm] = useState<string | null>(null);
+  const [termToExplain, setTermToExplain] = useState('');
+  const [isExplaining, setIsExplaining] = useState(false);
+  const [explanationError, setExplanationError] = useState<string | null>(null);
 
   const addLog = useCallback((message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -131,7 +138,7 @@ const ComprehensiveAnalysis: React.FC<ComprehensiveAnalysisProps> = ({ apiKey, m
         prompts.comprehensive_round2_system,
         prompts.comprehensive_round2_user
       );
-      
+
       setAnalysisResult({
         title,
         preliminarySummary,
@@ -147,6 +154,94 @@ const ComprehensiveAnalysis: React.FC<ComprehensiveAnalysisProps> = ({ apiKey, m
       addLog(`分析失败: ${errorMessage}`);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleOpenTermDialog = (keyword: string) => {
+    setCurrentKeywordForTerm(keyword);
+    setTermToExplain('');
+    setExplanationError(null);
+    setShowTermDialog(true);
+  };
+
+  const handleCloseTermDialog = () => {
+    setShowTermDialog(false);
+    setCurrentKeywordForTerm(null);
+    setTermToExplain('');
+    setExplanationError(null);
+  };
+
+  const handleExplainTerm = async () => {
+    if (!termToExplain.trim() || !currentKeywordForTerm || !analysisResult) {
+      setExplanationError('请输入要解释的术语');
+      return;
+    }
+
+    if (!apiKey) {
+      setExplanationError('请先配置API密钥');
+      return;
+    }
+
+    setIsExplaining(true);
+    setExplanationError(null);
+
+    try {
+      const keywordData = analysisResult.results[currentKeywordForTerm];
+
+      // Build passage text from primary and secondary concepts
+      let passage = `关键词: ${currentKeywordForTerm}\n\n`;
+      if (keywordData?.primary) {
+        passage += `主要概念:\n`;
+        passage += `定义: ${keywordData.primary.definition}\n`;
+        passage += `说明: ${keywordData.primary.explanation}\n`;
+        passage += `例子: ${keywordData.primary.examples}\n\n`;
+      }
+      if (keywordData?.secondary) {
+        passage += `次级概念:\n`;
+        passage += `定义: ${keywordData.secondary.definition}\n`;
+        passage += `说明: ${keywordData.secondary.explanation}\n`;
+        passage += `例子: ${keywordData.secondary.examples}\n`;
+      }
+
+      const explanation = await explainTermInKeyword(
+        termToExplain,
+        currentKeywordForTerm,
+        passage,
+        textContent,
+        apiKey,
+        modelName,
+        prompts.comprehensive_term_explanation_system,
+        prompts.comprehensive_term_explanation_user
+      );
+
+      // Update analysis result with the new explanation
+      setAnalysisResult(prev => {
+        if (!prev) return prev;
+
+        const updatedResults = { ...prev.results };
+        if (!updatedResults[currentKeywordForTerm]) {
+          updatedResults[currentKeywordForTerm] = {};
+        }
+
+        if (!updatedResults[currentKeywordForTerm]!.termExplanations) {
+          updatedResults[currentKeywordForTerm]!.termExplanations = {};
+        }
+
+        updatedResults[currentKeywordForTerm]!.termExplanations![termToExplain] = explanation;
+
+        return {
+          ...prev,
+          results: updatedResults
+        };
+      });
+
+      handleCloseTermDialog();
+
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : "解释生成失败";
+      setExplanationError(errorMessage);
+    } finally {
+      setIsExplaining(false);
     }
   };
   
@@ -252,11 +347,38 @@ const ComprehensiveAnalysis: React.FC<ComprehensiveAnalysisProps> = ({ apiKey, m
                </div>
 
                {analysisResult.keywords.map(keyword => (
-                 <details key={keyword} open className="bg-gray-900/50 p-3 rounded-md">
-                    <summary className="text-lg font-bold text-cyan-300 cursor-pointer">{keyword}</summary>
+                 <details key={keyword} open className="bg-gray-900/50 p-3 rounded-md relative">
+                    <summary className="text-lg font-bold text-cyan-300 cursor-pointer flex justify-between items-center">
+                      <span>{keyword}</span>
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleOpenTermDialog(keyword);
+                        }}
+                        className="ml-2 w-6 h-6 flex items-center justify-center bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-300 rounded-full text-sm transition-colors"
+                        title="解释术语"
+                      >
+                        ?
+                      </button>
+                    </summary>
                     <div className="mt-2 space-y-2">
                         {analysisResult.results[keyword]?.primary && renderAnalysisResult(keyword, analysisResult.results[keyword]!.primary!, '主要')}
                         {analysisResult.results[keyword]?.secondary && renderAnalysisResult(keyword, analysisResult.results[keyword]!.secondary!, '次级')}
+
+                        {/* Render term explanations */}
+                        {analysisResult.results[keyword]?.termExplanations &&
+                          Object.entries(analysisResult.results[keyword]!.termExplanations!).map(([term, explanation]) => (
+                            <div key={term} className="pl-4 border-l-2 border-cyan-500 mt-3">
+                              <h4 className="text-md font-semibold text-cyan-400 mt-2 mb-1">术语解释: {term}</h4>
+                              <div className="space-y-2 text-sm">
+                                <p><strong className="text-gray-300">定义:</strong> {explanation.definition}</p>
+                                <p><strong className="text-gray-300">说明:</strong> {explanation.explanation}</p>
+                                <p><strong className="text-gray-300">例子:</strong> {explanation.examples}</p>
+                              </div>
+                            </div>
+                          ))
+                        }
                     </div>
                  </details>
                ))}
@@ -264,6 +386,65 @@ const ComprehensiveAnalysis: React.FC<ComprehensiveAnalysisProps> = ({ apiKey, m
           )}
         </div>
       </div>
+
+      {/* Term Explanation Dialog */}
+      {showTermDialog && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={handleCloseTermDialog}>
+          <div className="bg-gray-800 rounded-lg border border-gray-700 shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-xl font-semibold text-cyan-400 mb-4">
+              解释术语 - {currentKeywordForTerm}
+            </h3>
+
+            <p className="text-sm text-gray-400 mb-3">
+              请输入您在"{currentKeywordForTerm}"这个关键词文块中不理解的术语或概念：
+            </p>
+
+            <input
+              type="text"
+              value={termToExplain}
+              onChange={(e) => setTermToExplain(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter' && !isExplaining) {
+                  handleExplainTerm();
+                }
+              }}
+              placeholder="例如：对立调和、辩证法等"
+              className="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 mb-4 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              autoFocus
+            />
+
+            {explanationError && (
+              <p className="text-sm text-red-400 bg-red-900/30 p-2 rounded-md mb-3">
+                {explanationError}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={handleCloseTermDialog}
+                disabled={isExplaining}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-md transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleExplainTerm}
+                disabled={isExplaining || !termToExplain.trim()}
+                className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-md transition-colors flex items-center gap-2"
+              >
+                {isExplaining ? (
+                  <>
+                    <LoadingIcon />
+                    生成中...
+                  </>
+                ) : (
+                  '生成解释'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

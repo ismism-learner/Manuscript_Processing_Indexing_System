@@ -497,3 +497,51 @@ export const performComprehensiveAnalysis = async (
 
     return { preliminarySummary, results: analysisResults, prompts: allPrompts };
 };
+
+/**
+ * Explain a specific term within a keyword's context
+ */
+export const explainTermInKeyword = async (
+    term: string,
+    keyword: string,
+    passage: string, // The primary and secondary analysis for this keyword
+    fullText: string,
+    apiKey: string,
+    modelName: string,
+    systemPrompt: string,
+    userPromptTemplate: string
+): Promise<KeywordAnalysis> => {
+    const userPrompt = userPromptTemplate
+        .replace(/\{\{term\}\}/g, term)
+        .replace(/\{\{keyword\}\}/g, keyword)
+        .replace(/\{\{passage\}\}/g, passage)
+        .replace(/\{\{fullText\}\}/g, fullText);
+
+    const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+            model: modelName,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.3,
+            response_format: { "type": "json_object" }
+        }),
+    });
+
+    if (!response.ok) {
+        throw await handleApiError(response);
+    }
+
+    const data = await response.json();
+    const content = data.choices[0].message.content;
+    const jsonString = content.replace(/^```json\s*|```\s*$/g, '');
+
+    return JSON.parse(jsonString) as KeywordAnalysis;
+};

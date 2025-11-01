@@ -56,6 +56,8 @@ export interface PromptTemplates {
   comprehensive_round1_user: string;
   comprehensive_round2_system: string;
   comprehensive_round2_user: string;
+  comprehensive_term_explanation_system: string;
+  comprehensive_term_explanation_user: string;
 }
 
 // From components/IndexViewer.tsx and hooks/usePhilosophyData.ts
@@ -71,6 +73,7 @@ export interface KeywordAnalysis {
 export interface ComprehensiveKeywordResult {
   primary?: KeywordAnalysis;
   secondary?: KeywordAnalysis;
+  termExplanations?: Record<string, KeywordAnalysis>; // term -> explanation
 }
 
 export interface ComprehensiveAnalysisResult {
