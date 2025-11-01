@@ -56,21 +56,31 @@ export interface PromptTemplates {
   comprehensive_round1_user: string;
   comprehensive_round2_system: string;
   comprehensive_round2_user: string;
+  explanationSystem: string;
+  explanationUser: string;
 }
 
 // From components/IndexViewer.tsx and hooks/usePhilosophyData.ts
 export type FilterType = 'all' | 'part-1' | 'part-2' | 'part-3' | 'part-4' | '3-layer' | '4-layer';
 
 // From ComprehensiveAnalysis.tsx
-export interface KeywordAnalysis {
-  definition: string;
-  explanation: string;
-  examples: string;
+export interface Concept {
+    id: string;
+    name: string;
+    definition: string;
+    explanation: string;
+    examples: string;
+    relationships: {
+        targetId: string;
+        description: string;
+    }[];
+    parent?: string; // Optional: for sub-concepts linking to main concepts
+    contextualExplanations?: Record<string, string>;
 }
 
 export interface ComprehensiveKeywordResult {
-  primary?: KeywordAnalysis;
-  secondary?: KeywordAnalysis;
+  primary?: Concept[];
+  secondary?: Concept[];
 }
 
 export interface ComprehensiveAnalysisResult {

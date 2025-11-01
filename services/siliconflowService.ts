@@ -1,6 +1,6 @@
 // services/siliconflowService.ts
 
-import { PhilosophyItem, SpecialFieldTheory, StructuredAnalysis, KeywordAnalysis, ComprehensiveKeywordResult } from "../types";
+import { PhilosophyItem, SpecialFieldTheory, StructuredAnalysis, Concept, ComprehensiveKeywordResult } from "../types";
 import { processInBatches } from "../utils/asyncUtils";
 
 const API_ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions";
@@ -398,7 +398,7 @@ export const performComprehensiveAnalysis = async (
 
 
     // --- Round 1: Primary Concept Collection ---
-    addLog(`第1轮: 开始为 ${keywords.length} 个关键词收集主要概念 (批处理上限: ${concurrencyLimit})...`);
+    addLog(`第1轮: 开始为 ${keywords.length} 个关键词提取主概念图谱 (批处理上限: ${concurrencyLimit})...`);
 
     const round1Processor = (keyword: string) => {
         const userPrompt = r1User
@@ -424,12 +424,12 @@ export const performComprehensiveAnalysis = async (
             const data = await response.json();
             const content = data.choices[0].message.content.replace(/^```json\s*|```\s*$/g, '');
             addLog(`第1轮 (${keyword}): 分析完成。`);
-            return { keyword, data: JSON.parse(content) as KeywordAnalysis };
+            return { keyword, data: (JSON.parse(content).concepts || []) as Concept[] };
         })
         .catch(error => {
             console.error(`SiliconFlow API Error (Comprehensive R1 - ${keyword}):`, error);
             const message = error instanceof Error ? error.message : "An unknown error occurred.";
-            throw new Error(`主要概念收集失败 (${keyword}): ${message}`);
+            throw new Error(`主概念提取失败 (${keyword}): ${message}`);
         });
     };
     
@@ -445,19 +445,27 @@ export const performComprehensiveAnalysis = async (
         analysisResults[res.keyword] = { primary: res.data };
     });
 
-    // --- Round 2: Secondary Concept Deepening ---
-    addLog(`第2轮: 开始为 ${keywords.length} 个关键词深化次级概念 (批处理上限: ${concurrencyLimit})...`);
+    const allMainConcepts = round1Results.flatMap(res => res.data.map(concept => ({
+        ...concept,
+        keyword: res.keyword,
+    })));
 
-    const round2Processor = ({ keyword, data: primaryAnalysis }: typeof round1Results[0]) => {
+
+    // --- Round 2: Secondary Concept Deepening ---
+    addLog(`第2轮: 开始为 ${allMainConcepts.length} 个主概念深化次级概念 (批处理上限: ${concurrencyLimit})...`);
+
+    const round2Processor = (mainConcept: typeof allMainConcepts[0]) => {
         const userPrompt = r2User
-            .replace(/{{keyword}}/g, keyword)
-            .replace(/{{primaryAnalysis}}/g, JSON.stringify(primaryAnalysis, null, 2))
+            .replace(/{{keyword}}/g, mainConcept.keyword)
+            .replace(/{{mainConceptName}}/g, mainConcept.name)
+            .replace(/{{mainConceptId}}/g, mainConcept.id)
+            .replace(/{{mainConceptAnalysis}}/g, JSON.stringify(mainConcept, null, 2))
             .replace(/{{textContent}}/g, textContent)
             .replace(/{{documentSummary}}/g, preliminarySummary);
             
-        allPrompts.round2[keyword] = userPrompt;
+        allPrompts.round2[mainConcept.name] = userPrompt;
 
-        addLog(`第2轮 (${keyword}): 发送请求...`);
+        addLog(`第2轮 (${mainConcept.keyword} > ${mainConcept.name}): 发送请求...`);
         return fetch(API_ENDPOINT, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -472,28 +480,74 @@ export const performComprehensiveAnalysis = async (
             if (!response.ok) throw await handleApiError(response);
             const data = await response.json();
             const content = data.choices[0].message.content.replace(/^```json\s*|```\s*$/g, '');
-            addLog(`第2轮 (${keyword}): 深化完成。`);
-            return { keyword, data: JSON.parse(content) as KeywordAnalysis };
+            addLog(`第2轮 (${mainConcept.keyword} > ${mainConcept.name}): 深化完成。`);
+            return { keyword: mainConcept.keyword, data: (JSON.parse(content).concepts || []) as Concept[] };
         })
         .catch(error => {
-            console.error(`SiliconFlow API Error (Comprehensive R2 - ${keyword}):`, error);
+            console.error(`SiliconFlow API Error (Comprehensive R2 - ${mainConcept.name}):`, error);
             const message = error instanceof Error ? error.message : "An unknown error occurred.";
-            throw new Error(`次级概念深化失败 (${keyword}): ${message}`);
+            throw new Error(`次级概念深化失败 (${mainConcept.name}): ${message}`);
         });
     };
 
-    const round2Results = await processInBatches(
-        round1Results, 
-        round2Processor, 
-        concurrencyLimit,
-        (batchIndex, totalBatches) => addLog(`第2轮: 处理深化批次 ${batchIndex}/${totalBatches}...`)
-    );
+    if (allMainConcepts.length > 0) {
+        const round2Results = await processInBatches(
+            allMainConcepts, 
+            round2Processor, 
+            concurrencyLimit,
+            (batchIndex, totalBatches) => addLog(`第2轮: 处理深化批次 ${batchIndex}/${totalBatches}...`)
+        );
 
-    round2Results.forEach(res => {
-        if (analysisResults[res.keyword]) {
-            analysisResults[res.keyword]!.secondary = res.data;
-        }
-    });
+        round2Results.forEach(res => {
+            if (analysisResults[res.keyword]) {
+                if (!analysisResults[res.keyword]!.secondary) {
+                    analysisResults[res.keyword]!.secondary = [];
+                }
+                analysisResults[res.keyword]!.secondary!.push(...res.data);
+            }
+        });
+    }
 
     return { preliminarySummary, results: analysisResults, prompts: allPrompts };
+};
+
+/**
+ * Service for On-Demand Contextual Explanation.
+ */
+export const generateContextualExplanation = async (
+    originalTextContent: string,
+    parentConcept: Concept,
+    newConcept: string,
+    apiKey: string,
+    model: string,
+    systemPrompt: string,
+    userPromptTemplate: string
+): Promise<string> => {
+    const userPrompt = userPromptTemplate
+      .replace('{{parentConceptName}}', parentConcept.name)
+      .replace('{{parentConceptDefinition}}', parentConcept.definition)
+      .replace('{{parentConceptExplanation}}', parentConcept.explanation)
+      .replace('{{newConcept}}', newConcept)
+      .replace('{{originalTextContent}}', originalTextContent);
+
+    try {
+        const response = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+                model,
+                messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+                temperature: 0.3,
+                max_tokens: 500,
+            }),
+        });
+
+        if (!response.ok) throw await handleApiError(response);
+        const data = await response.json();
+        return data.choices[0].message.content;
+    } catch (error) {
+        console.error(`SiliconFlow API Error (Explanation):`, error);
+        const message = error instanceof Error ? error.message : "An unknown error occurred.";
+        throw new Error(`Contextual explanation failed: ${message}`);
+    }
 };

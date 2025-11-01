@@ -1,3 +1,4 @@
+
 import React, { useCallback } from 'react';
 import { usePhilosophyData } from '../hooks/usePhilosophyData';
 import { philosophyIndex } from '../data/philosophyIndex';
@@ -81,44 +82,42 @@ const IndexViewer: React.FC = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full bg-gray-700 border border-gray-600 rounded-md py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-shadow"
             />
-            <svg className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 1 1 0-14 7 7 0 0 1 0 14z" /></svg>
+            {/* FIX: Completed the SVG path data for the search icon and the rest of the file. */}
+            <svg className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
         </div>
-        <div className="flex gap-2 flex-wrap w-full md:w-auto">
-          {filters.map((filter) => (
+        <div className="flex flex-wrap gap-2 justify-center">
+          {filters.map(filter => (
             <button
               key={filter.id}
               onClick={() => setFilter(filter.id)}
-              className={`${
-                activeFilter === filter.id
-                  ? 'bg-cyan-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              } px-4 py-2 rounded-md text-sm font-medium transition-colors`}
+              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                activeFilter === filter.id ? 'bg-cyan-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+              }`}
             >
               {filter.name}
             </button>
           ))}
-          <button
-            onClick={handleDownloadData}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
-            title="下载索引数据为CSV"
-          >
-            <DownloadIcon />
-            下载数据
-          </button>
         </div>
+        <button 
+          onClick={handleDownloadData} 
+          className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors text-sm font-medium"
+        >
+          <DownloadIcon />
+          下载数据
+        </button>
       </div>
 
-      {/* Results Counter */}
-      <div className="text-sm text-gray-400">
-        共找到 <span className="text-cyan-400 font-semibold">{filteredData.length}</span> 个主义
-      </div>
-
-      {/* Philosophy Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredData.map((item) => (
+      {/* Results Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {filteredData.map(item => (
           <PhilosophyCard key={item.code} item={item} />
         ))}
       </div>
+      {filteredData.length === 0 && (
+        <div className="text-center py-10 col-span-full">
+          <p className="text-gray-400">未找到匹配项。</p>
+        </div>
+      )}
     </div>
   );
 };

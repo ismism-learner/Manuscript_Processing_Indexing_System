@@ -160,7 +160,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                {renderPromptEditor('第1轮 (概念收集): 系统提示词', '定义AI在为关键词收集主要概念时的角色和规则。', 'comprehensive_round1_system')}
                {renderPromptEditor('第1轮 (概念收集): 用户提示词模板', '模板指令AI从原文中为单个关键词提取定义、说明和例子。可用占位符: {{keyword}}, {{textContent}}, {{documentSummary}}', 'comprehensive_round1_user')}
                {renderPromptEditor('第2轮 (次级深化): 系统提示词', '定义AI在基于初步分析结果、深化次级概念时的角色和规则。', 'comprehensive_round2_system')}
-               {renderPromptEditor('第2轮 (次级深化): 用户提示词模板', '模板指令AI基于关键词和第一轮结果，从原文中挖掘支撑性的次级概念。可用占位符: {{keyword}}, {{primaryAnalysis}}, {{textContent}}, {{documentSummary}}', 'comprehensive_round2_user')}
+               {renderPromptEditor('第2轮 (次级深化): 用户提示词模板', '模板指令AI基于关键词和第一轮结果，从原文中挖掘支撑性的次级概念。可用占位符: {{keyword}}, {{mainConceptName}}, {{mainConceptId}}, {{mainConceptAnalysis}}, {{textContent}}, {{documentSummary}}', 'comprehensive_round2_user')}
+               {renderPromptEditor('概念解释器: 系统提示词', '定义AI在按需解释新概念时的角色。', 'explanationSystem')}
+               {renderPromptEditor('概念解释器: 用户提示词模板', '模板指令AI基于原文和父概念，解释用户输入的新概念。可用占位符: {{parentConceptName}}, {{parentConceptDefinition}}, {{parentConceptExplanation}}, {{newConcept}}, {{originalTextContent}}', 'explanationUser')}
             </div>
           )}
         </div>
