@@ -24,12 +24,25 @@ export interface PhilosophyItem {
 }
 
 // From services/siliconflowService.ts and others
-export interface StructuredAnalysis {
-  fieldTheoryAnalysis?: string;
-  ontologyAnalysis?: string;
-  epistemologyAnalysis?: string;
-  teleologyAnalysis?: string;
+export interface Concept {
+    id: string;
+    name: string;
+    definition: string;
+    explanation: string;
+    examples: string;
+    movementPatternAnalysis?: string;
+    relationships: {
+        targetId: string;
+        description: string;
+    }[];
+    parent?: string; // Optional: for sub-concepts linking to main concepts
+    contextualExplanations?: Record<string, string>;
 }
+
+export interface StructuredAnalysis {
+  [domainKey: string]: Concept[];
+}
+
 
 export interface ProcessedFileResult {
   fileName: string;
@@ -38,7 +51,7 @@ export interface ProcessedFileResult {
   status: 'success' | 'error';
   report?: string;
   analysis?: Partial<StructuredAnalysis>;
-  prompts?: { analysis: string[]; report: string[] };
+  prompts?: { analysis: string[]; report: string[] }; // report prompts are now unused but kept for compatibility
   error?: string;
 }
 
@@ -46,6 +59,7 @@ export interface ProcessedFileResult {
 export interface PromptTemplates {
   analysisSystem: string;
   analysisUser: string;
+  // reportSystem and reportUser are no longer used for API calls
   reportSystem: string;
   reportUser: string;
   comparisonSystem: string;
@@ -64,20 +78,6 @@ export interface PromptTemplates {
 export type FilterType = 'all' | 'part-1' | 'part-2' | 'part-3' | 'part-4' | '3-layer' | '4-layer';
 
 // From ComprehensiveAnalysis.tsx
-export interface Concept {
-    id: string;
-    name: string;
-    definition: string;
-    explanation: string;
-    examples: string;
-    relationships: {
-        targetId: string;
-        description: string;
-    }[];
-    parent?: string; // Optional: for sub-concepts linking to main concepts
-    contextualExplanations?: Record<string, string>;
-}
-
 export interface ComprehensiveKeywordResult {
   primary?: Concept[];
   secondary?: Concept[];

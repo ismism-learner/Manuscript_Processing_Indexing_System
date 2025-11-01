@@ -1,14 +1,247 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { ProcessedFileResult, PromptTemplates } from '../types';
+import { ProcessedFileResult, PromptTemplates, Concept, StructuredAnalysis, PhilosophyItem } from '../types';
 import { philosophyIndex } from '../data/philosophyIndex';
-import { getStructuredAnalysisFromContent, generateMarkdownReport } from '../services/siliconflowService';
+import { getStructuredAnalysisFromContent, formatFieldTheory, generateContextualExplanation } from '../services/siliconflowService';
 import { findNextPhilosophyItem } from '../utils/philosophyUtils';
-import { UploadIcon, PlayIcon, LoadingIcon, TrashIcon, DownloadIcon, FileTextIcon, ClipboardIcon } from './Icons';
-import ReportDisplay from './ReportDisplay';
+import { UploadIcon, PlayIcon, LoadingIcon, TrashIcon, DownloadIcon, FileTextIcon, ClipboardIcon, QuestionMarkCircleIcon, CloseIcon } from './Icons';
 
 // Extend File to include content for pasted text
 type FileOrText = File & { content?: string };
+
+// #region --- Display Components ---
+
+const OnDemandExplainer: React.FC<{
+  parentConcept: Concept;
+  onExplanationAdded: (term: string, explanation: string) => void;
+  apiKey: string;
+  modelName: string;
+  prompts: PromptTemplates;
+  onClose: () => void;
+  textContent: string;
+}> = ({ parentConcept, onExplanationAdded, apiKey, modelName, prompts, onClose, textContent }) => {
+  const [term, setTerm] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleExplain = async () => {
+    if (!term.trim()) {
+      setError('请输入一个需要解释的概念。');
+      return;
+    }
+    setIsLoading(true);
+    setError('');
+    try {
+      const result = await generateContextualExplanation(
+        textContent,
+        parentConcept,
+        term,
+        apiKey,
+        modelName,
+        prompts.explanationSystem,
+        prompts.explanationUser
+      );
+      onExplanationAdded(term, result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '发生未知错误。');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="my-2 p-3 bg-gray-900/70 border border-cyan-700/50 rounded-lg shadow-lg animate-fade-in">
+      <div className="flex justify-between items-center mb-2">
+        <h5 className="text-sm font-bold text-cyan-400">解释新概念</h5>
+        <button onClick={onClose} className="text-gray-500 hover:text-white">
+            <CloseIcon />
+        </button>
+      </div>
+      <textarea
+        value={term}
+        onChange={(e) => setTerm(e.target.value)}
+        placeholder="在此粘贴您想理解的概念..."
+        className="w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-500"
+        rows={2}
+      />
+      <button
+        onClick={handleExplain}
+        disabled={isLoading || !term.trim()}
+        className="w-full mt-2 bg-cyan-700 hover:bg-cyan-600 text-white text-sm py-1 rounded-md disabled:bg-gray-600 flex items-center justify-center gap-2"
+      >
+        {isLoading ? <><LoadingIcon /> 正在思考...</> : '解释'}
+      </button>
+      {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+    </div>
+  );
+};
+
+
+const ConceptNode: React.FC<{
+  concept: Concept;
+  allConceptsMap: Map<string, Concept>;
+  childConcepts: Concept[];
+  level: number;
+  textContent: string;
+  apiKey: string;
+  modelName: string;
+  prompts: PromptTemplates;
+  addContextualExplanation: (conceptId: string, term: string, explanation: string) => void;
+}> = ({ concept, allConceptsMap, childConcepts, level, textContent, apiKey, modelName, prompts, addContextualExplanation }) => {
+  const [isExplainerOpen, setIsExplainerOpen] = useState(false);
+  
+  return (
+    <details open={level < 1} className="group" style={{ marginLeft: `${level * 1.5}rem` }}>
+      <summary className="cursor-pointer list-none flex items-center justify-between py-1 hover:bg-gray-700/50 rounded-md px-2">
+        <div className="flex items-start">
+          <span className="transition-transform duration-200 group-open:rotate-90 mr-2 text-cyan-400 mt-1">▶</span>
+          <span className="font-semibold text-gray-200">{concept.name}</span>
+        </div>
+        <button 
+            onClick={(e) => { e.preventDefault(); setIsExplainerOpen(!isExplainerOpen); }}
+            className="text-gray-500 hover:text-cyan-400 opacity-50 group-hover:opacity-100 transition-opacity"
+            aria-label={`为 ${concept.name} 相关的概念获取解释`}
+        >
+            <QuestionMarkCircleIcon />
+        </button>
+      </summary>
+      <div className="pl-6 border-l-2 border-gray-700 ml-2 space-y-3 py-2">
+        {isExplainerOpen && (
+            <OnDemandExplainer 
+                parentConcept={concept}
+                textContent={textContent}
+                apiKey={apiKey}
+                modelName={modelName}
+                prompts={prompts}
+                onExplanationAdded={(term, explanation) => {
+                    addContextualExplanation(concept.id, term, explanation);
+                    setIsExplainerOpen(false);
+                }}
+                onClose={() => setIsExplainerOpen(false)}
+            />
+        )}
+        <p className="text-sm text-gray-400"><strong className="font-medium text-gray-300">定义:</strong> {concept.definition}</p>
+        <p className="text-sm text-gray-400"><strong className="font-medium text-gray-300">说明:</strong> {concept.explanation}</p>
+        <p className="text-sm text-gray-400"><strong className="font-medium text-gray-300">例子:</strong> {concept.examples}</p>
+        {concept.movementPatternAnalysis && <p className="text-sm text-cyan-300/80 bg-cyan-900/20 p-2 rounded-md"><strong className="font-medium text-cyan-300">运动模式分析:</strong> {concept.movementPatternAnalysis}</p>}
+        
+        {concept.relationships && concept.relationships.length > 0 && (
+          <div>
+            <h4 className="text-sm font-medium text-gray-300">关系:</h4>
+            <ul className="list-none pl-2 text-sm text-gray-400 space-y-1 mt-1">
+              {concept.relationships.map((rel, index) => (
+                <li key={index}>
+                  <span className="text-cyan-500">→</span> {rel.description} <strong className="text-gray-300">[{allConceptsMap.get(rel.targetId)?.name || '未知概念'}]</strong>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {concept.contextualExplanations && Object.keys(concept.contextualExplanations).length > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-600">
+                <h4 className="text-sm font-medium text-gray-300">补充解释:</h4>
+                <div className="space-y-2 mt-1">
+                    {Object.entries(concept.contextualExplanations).map(([term, explanation]) => (
+                        <div key={term} className="text-sm p-2 bg-gray-800/60 rounded-md">
+                            <strong className="text-cyan-400">{term}:</strong>
+                            <p className="text-gray-400 whitespace-pre-wrap mt-1">{explanation}</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
+
+        {childConcepts.map(child => (
+          <ConceptNode 
+            key={child.id}
+            concept={child}
+            allConceptsMap={allConceptsMap}
+            childConcepts={[]}
+            level={level + 1}
+            textContent={textContent}
+            apiKey={apiKey}
+            modelName={modelName}
+            prompts={prompts}
+            addContextualExplanation={addContextualExplanation}
+          />
+        ))}
+      </div>
+    </details>
+  );
+};
+
+const domainNameMapping: Record<string, string> = {
+    fieldTheoryAnalysis: '场域论',
+    ontologyAnalysis: '本体论',
+    epistemologyAnalysis: '认识论',
+    teleologyAnalysis: '目的论',
+};
+
+const PhilosophyAnalysisDisplay: React.FC<{
+    analysis: Partial<StructuredAnalysis>;
+    philosophyItem: PhilosophyItem;
+    textContent: string;
+    apiKey: string;
+    modelName: string;
+    prompts: PromptTemplates;
+    addContextualExplanation: (domainKey: string, conceptId: string, term: string, explanation: string) => void;
+}> = ({ analysis, philosophyItem, textContent, apiKey, modelName, prompts, addContextualExplanation }) => {
+    
+    const allConceptsMap = useMemo(() => {
+        const map = new Map<string, Concept>();
+        Object.values(analysis).flat().forEach(c => map.set(c.id, c));
+        return map;
+    }, [analysis]);
+
+    const getTermForDomain = useCallback((domainKey: string, item: PhilosophyItem): string => {
+        if (domainKey === 'fieldTheoryAnalysis') {
+            return formatFieldTheory(item.fieldTheory);
+        }
+        const key = domainKey.replace('Analysis', '').toLowerCase() as keyof PhilosophyItem;
+        return String((item as any)[key] || '');
+    }, []);
+
+
+    return (
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-5 space-y-4 h-[calc(100vh-14rem)] overflow-y-auto">
+            {Object.entries(analysis).map(([domainKey, concepts]) => {
+                 if (!concepts || concepts.length === 0) return null;
+                 const primaryConcepts = concepts.filter(c => !c.parent);
+                 const domainTerm = getTermForDomain(domainKey, philosophyItem);
+                 return (
+                    <details key={domainKey} open className="bg-gray-900/50 p-3 rounded-md">
+                        <summary className="text-xl font-bold text-cyan-300 cursor-pointer list-none">
+                           <span className="text-gray-400 font-medium">{domainNameMapping[domainKey] || domainKey}:</span> {domainTerm}
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                             {primaryConcepts.map(pConcept => {
+                                const childConcepts = concepts.filter(sConcept => sConcept.parent === pConcept.id);
+                                return (
+                                    <ConceptNode
+                                      key={pConcept.id}
+                                      concept={pConcept}
+                                      allConceptsMap={allConceptsMap}
+                                      childConcepts={childConcepts}
+                                      level={0}
+                                      textContent={textContent}
+                                      apiKey={apiKey}
+                                      modelName={modelName}
+                                      prompts={prompts}
+                                      addContextualExplanation={(conceptId, term, explanation) => addContextualExplanation(domainKey, conceptId, term, explanation)}
+                                    />
+                                );
+                             })}
+                             {primaryConcepts.length === 0 && <p className="text-sm text-gray-500 pl-4">此论域未提取到概念。</p>}
+                        </div>
+                    </details>
+                );
+            })}
+        </div>
+    );
+};
+
+// #endregion
 
 interface ProcessingSystemProps {
   results: ProcessedFileResult[];
@@ -96,6 +329,57 @@ const ProcessingSystem: React.FC<ProcessingSystemProps> = ({
     addLog(`已从文本添加: ${fileName}`);
   };
 
+  const generateMarkdownFromAnalysis = (analysis: StructuredAnalysis, item: PhilosophyItem): string => {
+        const allConceptsMap = new Map<string, Concept>();
+        Object.values(analysis).flat().forEach(c => allConceptsMap.set(c.id, c));
+
+        const formatConcept = (concept: Concept, level: number): string => {
+            const prefix = '#'.repeat(level + 3);
+            let content = `${prefix} ${concept.name}\n\n`;
+            content += `**定义:** ${concept.definition}\n\n`;
+            content += `**说明:** ${concept.explanation}\n\n`;
+            content += `**例子:** ${concept.examples}\n\n`;
+            if (concept.movementPatternAnalysis) {
+                content += `**运动模式分析:** ${concept.movementPatternAnalysis}\n\n`;
+            }
+            if (concept.relationships && concept.relationships.length > 0) {
+                content += '**关系:**\n';
+                content += concept.relationships.map(rel => {
+                    const targetName = allConceptsMap.get(rel.targetId)?.name || '未知概念';
+                    return `- ${rel.description} [${targetName}]`;
+                }).join('\n') + '\n\n';
+            }
+             if (concept.contextualExplanations && Object.keys(concept.contextualExplanations).length > 0) {
+                content += '**补充解释:**\n';
+                content += Object.entries(concept.contextualExplanations).map(([term, explanation]) => {
+                    return ` - **${term}:** ${explanation}`;
+                }).join('\n').replace(/\n/g, '\n   ') + '\n\n';
+            }
+            return content;
+        };
+
+        let markdownContent = `# [${item.code}] ${item.name} 深度分析报告\n\n`;
+        
+        Object.entries(analysis).forEach(([domainKey, concepts]) => {
+            markdownContent += `## ${domainNameMapping[domainKey] || domainKey}\n\n`;
+            const primaryConcepts = concepts.filter(c => !c.parent);
+            primaryConcepts.forEach(pConcept => {
+                markdownContent += formatConcept(pConcept, 0);
+                const childConcepts = concepts.filter(sConcept => sConcept.parent === pConcept.id);
+                childConcepts.forEach(cConcept => {
+                    markdownContent += formatConcept(cConcept, 1);
+                });
+            });
+        });
+
+        const nextPhilosophyItem = findNextPhilosophyItem(item, philosophyIndex);
+        if (nextPhilosophyItem) {
+             markdownContent += `## 发展性展望\n\n(此部分由系统根据规则自动生成，可由AI进一步深化)\n\n“${item.name}”的体系发展到了终点，其内在的矛盾最终导向了后继主义 **“[${nextPhilosophyItem.code}] ${nextPhilosophyItem.name}”** 的诞生。`;
+        }
+
+        return markdownContent;
+  };
+
   const startProcessing = async () => {
     if (files.length === 0) {
       addLog('错误：没有文件或文本可供处理。');
@@ -167,33 +451,17 @@ const ProcessingSystem: React.FC<ProcessingSystemProps> = ({
               prompts.analysisSystem,
               prompts.analysisUser
             );
-            addLog(`[${file.name}] 第1轮结构化分析完成。`);
-
-            const nextPhilosophyItem = findNextPhilosophyItem(philosophyItem, philosophyIndex);
-            if (nextPhilosophyItem) {
-                addLog(`[${file.name}] 检测到过渡节点: "${philosophyItem.name}" -> "${nextPhilosophyItem.name}"。`);
-            }
-
-            const { report, prompts: reportPrompts } = await generateMarkdownReport(
-              analysis, 
-              philosophyItem, 
-              textContent, 
-              apiKey, 
-              modelName, 
-              (msg) => addLog(`[${file.name}] ${msg}`),
-              concurrencyLimit,
-              prompts.reportSystem,
-              prompts.reportUser,
-              nextPhilosophyItem
-            );
-            addLog(`[${file.name}] 第2轮综合与深化完成。`);
+            addLog(`[${file.name}] 结构化分析完成。`);
             
+            const report = generateMarkdownFromAnalysis(analysis, philosophyItem);
+            addLog(`[${file.name}] 已在客户端生成Markdown报告。`);
+
             const currentResult: ProcessedFileResult = {
               ...baseResult,
               status: 'success',
-              report: report,
               analysis: analysis,
-              prompts: { analysis: analysisPrompts, report: reportPrompts },
+              report: report,
+              prompts: { analysis: analysisPrompts, report: [] },
             };
             addLog(`[${file.name}] 成功处理。`);
             onProcessingComplete(currentResult);
@@ -217,12 +485,6 @@ const ProcessingSystem: React.FC<ProcessingSystemProps> = ({
     setIsProcessing(false);
   };
   
-  const currentReportContent = useMemo(() => {
-    if (!activeResult) return null;
-    const result = results.find(r => r.fileName === activeResult);
-    return result?.report ?? null;
-  }, [activeResult, results]);
-
   const handleDownloadReport = (result: ProcessedFileResult) => {
     if (!result.report) return;
     const blob = new Blob([result.report], { type: 'text/markdown;charset=utf-8' });
@@ -235,14 +497,41 @@ const ProcessingSystem: React.FC<ProcessingSystemProps> = ({
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
-  const activeResultData = useMemo(() => results.find(r => r.fileName === activeResult), [results, activeResult]);
   
-  const domainNames = useMemo(() => {
-    if (!activeResultData || !activeResultData.code) return [];
-    const numDomains = activeResultData.code.split('-').length;
-    return ['场域论', '本体论', '认识论', '目的论'].slice(0, numDomains);
+  const activeResultData = useMemo(() => results.find(r => r.fileName === activeResult), [results, activeResult]);
+  const activePhilosophyItem = useMemo(() => {
+    if (!activeResultData?.code) return null;
+    return philosophyIndex.find(p => p.code === activeResultData.code) || null;
   }, [activeResultData]);
+  const activeFileContent = useMemo(() => {
+    const file = files.find(f => f.name === activeResult);
+    return file?.content || '';
+  }, [files, activeResult]);
+
+  const handleAddContextualExplanation = useCallback((domainKey: string, conceptId: string, term: string, explanation: string) => {
+    const resultToUpdate = results.find(r => r.fileName === activeResult);
+    const philosophyItem = philosophyIndex.find(p => p.code === resultToUpdate?.code);
+
+    if (!resultToUpdate || !resultToUpdate.analysis || !philosophyItem) return;
+
+    const newResult = JSON.parse(JSON.stringify(resultToUpdate));
+    
+    const conceptsInDomain = newResult.analysis[domainKey];
+    const targetConcept = conceptsInDomain?.find((c: Concept) => c.id === conceptId);
+
+    if (targetConcept) {
+        if (!targetConcept.contextualExplanations) {
+            targetConcept.contextualExplanations = {};
+        }
+        targetConcept.contextualExplanations[term] = explanation;
+        
+        newResult.report = generateMarkdownFromAnalysis(newResult.analysis, philosophyItem);
+        
+        onProcessingComplete(newResult);
+    } else {
+        console.error(`Could not find concept with ID: ${conceptId} in domain: ${domainKey}`);
+    }
+  }, [results, activeResult, onProcessingComplete, generateMarkdownFromAnalysis]);
 
 
   return (
@@ -305,33 +594,20 @@ const ProcessingSystem: React.FC<ProcessingSystemProps> = ({
             </div>
         )}
 
-        {activeResult && activeResultData?.prompts && (
+        {activeResult && activeResultData?.prompts?.analysis && (
             <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
                 <h2 className="text-xl font-semibold text-gray-200 mb-3">处理提示词 ({activeResult})</h2>
-                <div className="border-b border-gray-700 mb-2">
-                    <nav className="-mb-px flex space-x-4">
-                        <button onClick={() => setActivePromptTab('analysis')} className={`py-2 px-3 text-sm font-medium ${activePromptTab === 'analysis' ? 'border-b-2 border-cyan-400 text-cyan-400' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>
-                            第1轮：结构化分析
-                        </button>
-                        <button onClick={() => setActivePromptTab('report')} className={`py-2 px-3 text-sm font-medium ${activePromptTab === 'report' ? 'border-b-2 border-cyan-400 text-cyan-400' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>
-                            第2轮：综合与深化
-                        </button>
-                    </nav>
-                </div>
                 <div className="bg-black/50 rounded-md p-2 h-64 overflow-y-auto space-y-2">
-                    {(activeResultData.prompts[activePromptTab] || []).map((prompt, index) => (
+                    {(activeResultData.prompts.analysis).map((prompt, index) => (
                         <details key={index} className="bg-gray-900/50 rounded-md">
                             <summary className="cursor-pointer text-sm text-cyan-400 p-2 font-medium">
-                                第 {index + 1} 次调用: {domainNames[index] || `调用 ${index + 1}`}
+                                第 {index + 1} 次调用
                             </summary>
                             <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans mt-1 p-3 border-t border-gray-700 bg-black/20">
                                 {prompt}
                             </pre>
                         </details>
                     ))}
-                    {(activeResultData.prompts[activePromptTab] || []).length === 0 && (
-                         <p className="text-gray-500 p-4 text-center">此轮无可用提示词。</p>
-                    )}
                 </div>
             </div>
         )}
@@ -367,7 +643,7 @@ const ProcessingSystem: React.FC<ProcessingSystemProps> = ({
                 <p className="mt-4 text-gray-400">正在生成报告...</p>
            </div>
         )}
-        {!isProcessing && currentReportContent && (
+        {!isProcessing && activeResultData?.analysis && activePhilosophyItem && (
             <>
                 <div className="flex justify-between items-center mb-3">
                     <p className="text-gray-400 text-sm">正在显示: <span className="font-medium text-gray-200">{activeResult}</span></p>
@@ -376,10 +652,18 @@ const ProcessingSystem: React.FC<ProcessingSystemProps> = ({
                         下载
                     </button>
                 </div>
-                <ReportDisplay reportContent={currentReportContent} />
+                <PhilosophyAnalysisDisplay 
+                  analysis={activeResultData.analysis}
+                  philosophyItem={activePhilosophyItem}
+                  textContent={activeFileContent}
+                  apiKey={apiKey}
+                  modelName={modelName}
+                  prompts={prompts}
+                  addContextualExplanation={handleAddContextualExplanation}
+                />
             </>
         )}
-        {!isProcessing && !currentReportContent && results.length > 0 && (
+        {!isProcessing && !activeResultData?.analysis && results.length > 0 && (
              <div className="flex flex-col items-center justify-center h-96 bg-gray-800/50 rounded-lg border border-gray-700">
                 <p className="text-gray-400">从上方列表选择一个文件查看报告。</p>
            </div>

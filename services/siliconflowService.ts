@@ -2,13 +2,16 @@
 
 import { PhilosophyItem, SpecialFieldTheory, StructuredAnalysis, Concept, ComprehensiveKeywordResult } from "../types";
 import { processInBatches } from "../utils/asyncUtils";
+import { findNextPhilosophyItem } from "../utils/philosophyUtils";
+
 
 const API_ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions";
 
 const movementMap: { [key: string]: string } = {
     '1': '循环运动 (Cyclical Motion)',
     '2': '对立冲突 (Oppositional Conflict)',
-    '3': '调和统一 (Harmonious Reconciliation)',
+    // FIX: Changed '调和统一' to '调和' to be consistent with the strict constraints in the system prompts.
+    '3': '调和 (Harmonious Reconciliation)',
     '4': '调和失败/崩解 (Failed Reconciliation / Disintegration)'
 };
 
@@ -74,6 +77,7 @@ async function handleApiError(response: Response): Promise<Error> {
 
 /**
  * Round 1: Get structured analysis from the manuscript content, with parallel API calls for each domain.
+ * This now fetches a full concept hierarchy in a single pass per domain.
  */
 export const getStructuredAnalysisFromContent = async (
     textContent: string, 
@@ -84,33 +88,33 @@ export const getStructuredAnalysisFromContent = async (
     concurrencyLimit: number,
     systemPrompt: string,
     userPromptTemplate: string
-): Promise<{ analysis: Partial<StructuredAnalysis>; prompts: string[]; }> => {
+): Promise<{ analysis: StructuredAnalysis; prompts: string[]; }> => {
     
     const digits = philosophyItem.code.split('-');
     const domainsToProcess = DOMAIN_DEFINITIONS.slice(0, digits.length);
     const domainPatterns = getDomainMovementPatterns(philosophyItem.code);
 
     const analysisPrompts = domainsToProcess.map(domain => {
+      // FIX: Ensure domainTerm is always a string. `domain.key` can be inferred as `string | number`, so it must be converted to a string before calling `.replace`. The property access on `philosophyItem` might also be undefined, so we default to an empty string.
       const domainTerm = domain.name === '场域论' 
         ? formatFieldTheory(philosophyItem.fieldTheory) 
-        // Fix: Cast domain.key to string to safely call replace method.
-        : (philosophyItem as any)[(domain.key as string).replace('Analysis','').toLowerCase()];
+        : String((philosophyItem as any)[String(domain.key).replace('Analysis','').toLowerCase()] || '');
       const movementPattern = domainPatterns[domain.name as keyof typeof domainPatterns] || '不适用';
       
       return userPromptTemplate
-        .replace('{{domainName}}', domain.name)
-        .replace('{{philosophyName}}', philosophyItem.name)
-        .replace('{{philosophyCode}}', philosophyItem.code)
-        .replace('{{domainTerm}}', domainTerm)
-        .replace('{{movementPattern}}', movementPattern)
-        .replace('{{textContent}}', textContent)
-        .replace('{{domainKey}}', domain.key);
+        .replace(/{{domainName}}/g, domain.name)
+        .replace(/{{philosophyName}}/g, philosophyItem.name)
+        .replace(/{{philosophyCode}}/g, philosophyItem.code)
+        .replace(/{{domainTerm}}/g, domainTerm)
+        .replace(/{{movementPattern}}/g, movementPattern)
+        .replace(/{{textContent}}/g, textContent)
+        .replace(/{{domainKey}}/g, String(domain.key));
     });
 
-    addLog(`第1轮: 开始分析 ${domainsToProcess.length} 个论域 (批处理上限: ${concurrencyLimit})...`);
+    addLog(`开始分析 ${domainsToProcess.length} 个论域 (批处理上限: ${concurrencyLimit})...`);
     
     const processor = (domain: typeof domainsToProcess[0], index: number) => {
-        addLog(`第1轮 (${domain.name}): 发送分析请求...`);
+        addLog(`分析 (${domain.name}): 发送请求...`);
         return fetch(API_ENDPOINT, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -124,14 +128,15 @@ export const getStructuredAnalysisFromContent = async (
         .then(async response => {
             if (!response.ok) {
                  const error = await handleApiError(response);
-                 addLog(`第1轮 (${domain.name}): 分析失败 - ${error.message}`);
+                 addLog(`分析 (${domain.name}): 失败 - ${error.message}`);
                  throw error;
             }
             const data = await response.json();
             const content = data.choices[0].message.content;
             const jsonString = content.replace(/^```json\s*|```\s*$/g, '');
-            addLog(`第1轮 (${domain.name}): 分析完成。`);
-            return JSON.parse(jsonString);
+            addLog(`分析 (${domain.name}): 完成。`);
+            const concepts = (JSON.parse(jsonString).concepts || []) as Concept[];
+            return { domainKey: domain.key, concepts };
         })
         .catch(error => {
             console.error(`SiliconFlow API Error (Analysis - ${domain.name}):`, error);
@@ -140,144 +145,20 @@ export const getStructuredAnalysisFromContent = async (
         });
     };
 
-    const partialAnalyses = await processInBatches(
+    const analysisParts = await processInBatches(
         domainsToProcess, 
         processor, 
         concurrencyLimit,
-        (batchIndex, totalBatches) => addLog(`第1轮: 处理论域批次 ${batchIndex}/${totalBatches}...`)
+        (batchIndex, totalBatches) => addLog(`处理论域批次 ${batchIndex}/${totalBatches}...`)
     );
 
-    const analysis = partialAnalyses.reduce((acc, partial) => ({ ...acc, ...partial }), {});
+    const analysis: StructuredAnalysis = {};
+    analysisParts.forEach(part => {
+        analysis[part.domainKey] = part.concepts;
+    });
     
     return { analysis, prompts: analysisPrompts };
 };
-
-/**
- * Round 2: Generate the final markdown report, with parallel API calls for each domain section.
- */
-export const generateMarkdownReport = async (
-    analysis: Partial<StructuredAnalysis>, 
-    philosophyItem: PhilosophyItem,
-    textContent: string,
-    apiKey: string,
-    model: string,
-    addLog: (message: string) => void,
-    concurrencyLimit: number,
-    systemPrompt: string,
-    userPromptTemplate: string,
-    nextPhilosophyItem?: PhilosophyItem | null
-): Promise<{ report: string; prompts: string[]; }> => {
-    
-    const digits = philosophyItem.code.split('-');
-    const domainsToProcess = DOMAIN_DEFINITIONS.slice(0, digits.length);
-
-    const reportPrompts = domainsToProcess.map((domain, i) => {
-        const isLastDomain = i === domainsToProcess.length - 1;
-        
-        let developmentalLinkPrompt = '';
-        if (isLastDomain && nextPhilosophyItem) {
-             const currentCode = philosophyItem.code;
-             const currentParts = currentCode.split('-');
-
-             let failureDescription = '';
-             let nextDomain = '';
-
-             if (currentParts.length === 4) {
-                if (currentParts[1] === '4' && currentParts[2] === '4' && currentParts[3] === '4') {
-                    failureDescription = `“${philosophyItem.name}” 的本体论、认识论和目的论均以“调和失败”告终，标志着其基础范式的全面失效`;
-                    nextDomain = '场域论';
-                } else if (currentParts[2] === '4' && currentParts[3] === '4') {
-                    failureDescription = `“${philosophyItem.name}” 的认识论（${currentParts[2]}）与目的论（${currentParts[3]}）双双“调和失败”`;
-                    nextDomain = '本体论';
-                } else if (currentParts[3] === '4') {
-                    failureDescription = `“${philosophyItem.name}” 的目的论（${currentParts[3]}）以“调和失败”告终`;
-                    nextDomain = '认识论';
-                }
-             }
-
-            if (nextDomain) {
-                 const nextDomainIndex = DOMAIN_DEFINITIONS.findIndex(d => d.name === nextDomain);
-                 // Fix: Cast domain.key to string to safely call replace method.
-                 const nextDomainKey = (DOMAIN_DEFINITIONS[nextDomainIndex]?.key as string)?.replace('Analysis', '').toLowerCase() || 'ontology';
-                 const nextDomainTerm = nextDomain === '场域论' 
-                    ? formatFieldTheory(nextPhilosophyItem.fieldTheory)
-                    : (nextPhilosophyItem as any)[nextDomainKey];
-
-                developmentalLinkPrompt = `
----
-**5. 发展性链接分析 (特殊指令):**
-这是本报告的最后一部分，请在所有内容之后，另起一节，使用Markdown二级标题 \`## 发展性展望\`。
-在此章节中，你必须分析以下哲学演化过程：
-1.  **阐释失败**: 深入分析 ${failureDescription} 是如何导致其体系内部张力无法解决而终结的。
-2.  **分析“扬弃”**: 论述这种“失败”又是如何被“扬弃”（即被否定、保留并提升），并辩证地构成了后继主义 **“[${nextPhilosophyItem.code}] ${nextPhilosophyItem.name}”** 新的 **“${nextDomain}”** (核心术语: ${nextDomainTerm}) 的基础。
-`;
-            }
-        }
-
-        const domainTerm = domain.name === '场域论' 
-            ? formatFieldTheory(philosophyItem.fieldTheory) 
-            // Fix: Cast domain.key to string to safely call replace method.
-            : (philosophyItem as any)[(domain.key as string).replace('Analysis','').toLowerCase()];
-        
-        let finalSummaryPrompt = isLastDomain 
-          ? `7. **最终概括**: 在本章节内容的末尾，结合所有论域的分析（虽然你只撰写本章），提及代表人物 **${philosophyItem.representative}**，并对该主义的完整体系进行一个高度凝练的最终概括。`
-          : '';
-
-        return userPromptTemplate
-          .replace('{{philosophyName}}', philosophyItem.name)
-          .replace('{{philosophyCode}}', philosophyItem.code)
-          .replace('{{domainName}}', domain.name)
-          .replace('{{domainKey}}', domain.key)
-          .replace('{{domainAnalysis}}', (analysis as any)[domain.key] || '无初步分析。')
-          .replace('{{textContent}}', textContent)
-          .replace('{{domainTerm}}', domainTerm)
-          .replace('{{finalSummary}}', finalSummaryPrompt)
-          .replace('{{developmentalLink}}', developmentalLinkPrompt);
-    });
-
-    addLog(`第2轮: 开始综合与深化 ${domainsToProcess.length} 个论域 (批处理上限: ${concurrencyLimit})...`);
-
-    const processor = (domain: typeof domainsToProcess[0], i: number) => {
-        addLog(`第2轮 (${domain.name}): 发送深化请求...`);
-        return fetch(API_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify({
-                model: model,
-                messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: reportPrompts[i] }],
-                temperature: 0.3,
-            }),
-        })
-        .then(async response => {
-            if (!response.ok) {
-                const error = await handleApiError(response);
-                addLog(`第2轮 (${domain.name}): 深化失败 - ${error.message}`);
-                throw error;
-            }
-            const data = await response.json();
-            addLog(`第2轮 (${domain.name}): 深化完成。`);
-            return data.choices[0].message.content;
-        })
-        .catch(error => {
-            console.error(`SiliconFlow API Error (Report - ${domain.name}):`, error);
-            const message = error instanceof Error ? error.message : "An unknown error occurred.";
-            throw new Error(`报告生成失败 (${domain.name}): ${message}`);
-        });
-    };
-
-    const reportParts = await processInBatches(
-        domainsToProcess, 
-        processor, 
-        concurrencyLimit,
-        (batchIndex, totalBatches) => addLog(`第2轮: 处理报告批次 ${batchIndex}/${totalBatches}...`)
-    );
-        
-    const mainTitle = `# [${philosophyItem.code}] ${philosophyItem.name} 深度分析报告`;
-    const finalReport = [mainTitle, ...reportParts].join('\n\n');
-    
-    return { report: finalReport, prompts: reportPrompts };
-};
-
 
 /**
  * Service for Juxtaposition Analysis.
