@@ -1,6 +1,7 @@
+
 import React, { useState, useMemo, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { PromptTemplates, ComprehensiveAnalysisResult, Concept } from '../types';
+import { PromptTemplates, ComprehensiveAnalysisResult, Concept, ComprehensiveKeywordResult } from '../types';
 import { performComprehensiveAnalysis, generateContextualExplanation } from '../services/siliconflowService';
 import { LoadingIcon, PlayIcon, UploadIcon, QuestionMarkCircleIcon, CloseIcon, DownloadIcon } from './Icons';
 
@@ -355,8 +356,10 @@ const ComprehensiveAnalysis: React.FC<ComprehensiveAnalysisProps> = ({ apiKey, m
     if (!analysisResult) return new Map<string, Concept>();
     const map = new Map<string, Concept>();
     Object.values(analysisResult.results).forEach(keywordResult => {
-        (keywordResult.primary || []).forEach(c => map.set(c.id, c));
-        (keywordResult.secondary || []).forEach(c => map.set(c.id, c));
+        // FIX: 'keywordResult' is inferred as 'unknown'. Cast to the correct type to allow property access.
+        const kr = keywordResult as Partial<ComprehensiveKeywordResult>;
+        (kr.primary || []).forEach(c => map.set(c.id, c));
+        (kr.secondary || []).forEach(c => map.set(c.id, c));
     });
     return map;
   }, [analysisResult]);

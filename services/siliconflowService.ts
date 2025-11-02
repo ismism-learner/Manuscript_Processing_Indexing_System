@@ -1,6 +1,6 @@
 // services/siliconflowService.ts
 
-import { PhilosophyItem, SpecialFieldTheory, StructuredAnalysis, Concept, ComprehensiveKeywordResult } from "../types";
+import { PhilosophyItem, SpecialFieldTheory, StructuredAnalysis, Concept, ComprehensiveKeywordResult, ChatMessage } from "../types";
 import { processInBatches } from "../utils/asyncUtils";
 import { findNextPhilosophyItem } from "../utils/philosophyUtils";
 
@@ -253,7 +253,7 @@ export const performComprehensiveAnalysis = async (
         });
         if (!response.ok) throw await handleApiError(response);
         const data = await response.json();
-        const content = data.choices[0].message.content.replace(/^```json\s*|```\s*$/g, '');
+        const content = data.choices[0].message.content.replace(/^```json\s*|```s*$/g, '');
         const parsedContent = JSON.parse(content);
         
         const summaryValue = parsedContent.summary;
@@ -303,7 +303,7 @@ export const performComprehensiveAnalysis = async (
         .then(async response => {
             if (!response.ok) throw await handleApiError(response);
             const data = await response.json();
-            const content = data.choices[0].message.content.replace(/^```json\s*|```\s*$/g, '');
+            const content = data.choices[0].message.content.replace(/^```json\s*|```s*$/g, '');
             addLog(`第1轮 (${keyword}): 分析完成。`);
             return { keyword, data: (JSON.parse(content).concepts || []) as Concept[] };
         })
@@ -360,7 +360,7 @@ export const performComprehensiveAnalysis = async (
         .then(async response => {
             if (!response.ok) throw await handleApiError(response);
             const data = await response.json();
-            const content = data.choices[0].message.content.replace(/^```json\s*|```\s*$/g, '');
+            const content = data.choices[0].message.content.replace(/^```json\s*|```s*$/g, '');
             addLog(`第2轮 (${mainConcept.keyword} > ${mainConcept.name}): 深化完成。`);
             return { keyword: mainConcept.keyword, data: (JSON.parse(content).concepts || []) as Concept[] };
         })
@@ -430,5 +430,107 @@ export const generateContextualExplanation = async (
         console.error(`SiliconFlow API Error (Explanation):`, error);
         const message = error instanceof Error ? error.message : "An unknown error occurred.";
         throw new Error(`Contextual explanation failed: ${message}`);
+    }
+};
+
+/**
+ * Service for generating a persona prompt.
+ */
+export const generatePersonaPrompt = async (
+    item: PhilosophyItem,
+    report: string,
+    apiKey: string,
+    model: string,
+    systemPrompt: string,
+    userPromptTemplate: string,
+    signal?: AbortSignal
+): Promise<string> => {
+    const formattedFieldTheory = formatFieldTheory(item.fieldTheory);
+    
+    const userPrompt = userPromptTemplate
+      .replace('{{philosophyName}}', item.name)
+      .replace('{{philosophyCode}}', item.code)
+      .replace('{{fieldTheoryDetails}}', formattedFieldTheory)
+      .replace('{{ontology}}', item.ontology)
+      .replace('{{epistemology}}', item.epistemology)
+      .replace('{{teleology}}', item.teleology)
+      .replace('{{representative}}', item.representative)
+      .replace('{{report}}', report);
+
+    try {
+        const response = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+                model,
+                messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+                temperature: 0.5,
+            }),
+            signal,
+        });
+
+        if (!response.ok) throw await handleApiError(response);
+        const data = await response.json();
+        return data.choices[0].message.content;
+    } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+             throw error; // Re-throw AbortError to be handled by the caller
+        }
+        console.error(`SiliconFlow API Error (Persona Extraction):`, error);
+        const message = error instanceof Error ? error.message : "An unknown error occurred.";
+        throw new Error(`人格提取失败: ${message}`);
+    }
+};
+
+/**
+ * Service for chatting with a persona.
+ */
+export const chatWithPersona = async (
+    systemPrompt: string,
+    history: ChatMessage[],
+    message: string,
+    apiKey: string,
+    model: string,
+    signal?: AbortSignal
+): Promise<{ thinking: string | null; reply: string }> => {
+    const messages = [
+        { role: 'system', content: systemPrompt },
+        // Map history to the format expected by the API, excluding the 'thinking' part from past messages.
+        ...history.map(msg => ({ role: msg.role === 'model' ? 'assistant' : 'user', content: msg.content })),
+        { role: 'user', content: message }
+    ];
+
+    try {
+        const response = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+                model,
+                messages,
+                temperature: 0.85,
+            }),
+            signal,
+        });
+
+        if (!response.ok) throw await handleApiError(response);
+        const data = await response.json();
+        const rawContent = data.choices[0].message.content;
+        
+        const thinkingMatch = rawContent.match(/<thinking>([\s\S]*?)<\/thinking>/);
+        if (thinkingMatch) {
+            const thinking = thinkingMatch[1].trim();
+            const reply = rawContent.replace(/<thinking>[\s\S]*?<\/thinking>/, '').trim();
+            return { thinking, reply };
+        } else {
+            return { thinking: null, reply: rawContent.trim() };
+        }
+
+    } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+             throw error; // Re-throw AbortError to be handled by the caller
+        }
+        console.error(`SiliconFlow API Error (Chat):`, error);
+        const msg = error instanceof Error ? error.message : "发生未知错误。";
+        throw new Error(`对话失败: ${msg}`);
     }
 };

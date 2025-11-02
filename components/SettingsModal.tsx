@@ -149,6 +149,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               {renderPromptEditor('第2轮: 用户提示词模板', '用于为每个哲学论域生成报告章节的模板。可用占位符: {{philosophyName}}, {{philosophyCode}}, {{domainName}}, {{domainKey}}, {{domainAnalysis}}, {{textContent}}, {{domainTerm}}, {{finalSummary}}, {{developmentalLink}}', 'reportUser')}
               {renderPromptEditor('拼拼乐: 系统提示词', '定义AI在进行对比分析时的核心角色和规则。', 'comparisonSystem')}
               {renderPromptEditor('拼拼乐: 用户提示词模板', '用于生成对比分析指令的模板。可用占位符: {{itemACode}}, ..., {{reportB}}', 'comparisonUser')}
+              {renderPromptEditor('人格提取: 系统提示词', '定义AI在将哲学分析转化为可交互人格时的元角色和规则。', 'personaSystem')}
+              {renderPromptEditor('人格提取: 用户提示词模板', '用于生成完整人格提示词的模板。可用占位符: {{philosophyName}}, {{philosophyCode}}, {{ontology}}, {{epistemology}}, {{teleology}}, {{representative}}, {{report}}', 'personaUser')}
             </div>
           )}
 

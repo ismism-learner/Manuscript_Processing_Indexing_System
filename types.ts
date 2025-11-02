@@ -2,7 +2,7 @@ import React from 'react';
 
 // From App.tsx
 export type TopLevelTab = 'philosophy' | 'comprehensive';
-export type PhilosophySubTab = 'processing' | 'viewer' | 'juxtaposition';
+export type PhilosophySubTab = 'processing' | 'viewer' | 'juxtaposition' | 'personaExtraction';
 
 // From data/philosophyIndex.ts
 export interface SpecialFieldTheory {
@@ -72,6 +72,8 @@ export interface PromptTemplates {
   comprehensive_round2_user: string;
   explanationSystem: string;
   explanationUser: string;
+  personaSystem: string;
+  personaUser: string;
 }
 
 // From components/IndexViewer.tsx and hooks/usePhilosophyData.ts
@@ -93,4 +95,18 @@ export interface ComprehensiveAnalysisResult {
       round1: Record<string, string>;
       round2: Record<string, string>;
     };
+}
+
+// For API communication
+export interface ChatMessage {
+  role: 'user' | 'model';
+  content: string;
+  thinking?: string;
+}
+
+// For displaying multi-persona chats
+export interface DisplayMessage {
+  speaker: 'user' | 'personaA' | 'personaB';
+  content: string;
+  thinking?: string;
 }
