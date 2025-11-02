@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import ProcessingSystem from './components/ProcessingSystem';
 import IndexViewer from './components/IndexViewer';
@@ -6,26 +5,30 @@ import JuxtapositionAnalysis from './components/JuxtapositionAnalysis';
 import ComprehensiveAnalysis from './components/ComprehensiveAnalysis';
 import SettingsModal from './components/SettingsModal';
 import { GearIcon, BookIcon, CompareIcon, SettingsIcon, PenNibIcon, BrainCircuitIcon, PersonaIcon, LoadingIcon, ClipboardIcon, SendIcon, UsersIcon } from './components/Icons';
-import { TopLevelTab, PhilosophySubTab, ProcessedFileResult, PromptTemplates, ChatMessage, DisplayMessage } from './types';
+import { TopLevelTab, PhilosophySubTab, ProcessedFileResult, PromptTemplates, ChatMessage, DisplayMessage, StructuredAnalysis, PhilosophyItem, PersonaParameterConfig } from './types';
 import { defaultPrompts } from './prompts';
 import { generatePersonaPrompt, chatWithPersona } from './services/siliconflowService';
 import { philosophyIndex } from './data/philosophyIndex';
+import { defaultPersonaParameters } from './data/personaParameters';
 
 // --- Conversation Observer Component Definition ---
 interface ConversationObserverProps {
   personaPromptA: string;
   personaNameA: string;
+  selectedIsmA: string;
   personaPromptB: string;
   personaNameB: string;
+  selectedIsmB: string;
   apiKey: string;
   modelName: string;
+  personaParameters: PersonaParameterConfig;
   isEnabled: boolean;
   isConversing: boolean;
   setIsConversing: (isConversing: boolean) => void;
   conversationController: React.MutableRefObject<AbortController | null>;
 }
 
-const ConversationObserver: React.FC<ConversationObserverProps> = ({ personaPromptA, personaNameA, personaPromptB, personaNameB, apiKey, modelName, isEnabled, isConversing, setIsConversing, conversationController }) => {
+const ConversationObserver: React.FC<ConversationObserverProps> = ({ personaPromptA, personaNameA, selectedIsmA, personaPromptB, personaNameB, selectedIsmB, apiKey, modelName, personaParameters, isEnabled, isConversing, setIsConversing, conversationController }) => {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [initialTopic, setInitialTopic] = useState('');
   const [error, setError] = useState('');
@@ -66,8 +69,9 @@ const ConversationObserver: React.FC<ConversationObserverProps> = ({ personaProm
         const currentPersonaPrompt = isTurnA ? personaPromptA : personaPromptB;
         const currentHistory = isTurnA ? historyA : historyB;
         const currentSpeaker: 'personaA' | 'personaB' = isTurnA ? 'personaA' : 'personaB';
+        const currentCode = isTurnA ? selectedIsmA : selectedIsmB;
 
-        const { thinking, reply } = await chatWithPersona(currentPersonaPrompt, currentHistory, currentMessage, apiKey, modelName, controller.signal);
+        const { thinking, reply } = await chatWithPersona(currentPersonaPrompt, currentHistory, currentMessage, apiKey, modelName, controller.signal, currentCode, personaParameters);
         
         if (controller.signal.aborted) break;
 
@@ -109,7 +113,7 @@ const ConversationObserver: React.FC<ConversationObserverProps> = ({ personaProm
       </div>
       {!isEnabled ? (
         <div className="flex-grow flex items-center justify-center text-center text-gray-400 px-4">
-          <p>在左侧生成两个人格后，<br />即可在此处观察它们之间的对话。</p>
+          <p>在左侧选择两个人格并生成提示词后，<br />即可在此处观察它们之间的对话。</p>
         </div>
       ) : (
         <>
@@ -173,17 +177,20 @@ interface PersonaChatInterfaceProps {
     personaPromptA: string;
     personaNameA: string;
     isEnabledA: boolean;
+    selectedIsmA: string;
     personaPromptB: string;
     personaNameB: string;
     isEnabledB: boolean;
+    selectedIsmB: string;
     apiKey: string;
     modelName: string;
+    personaParameters: PersonaParameterConfig;
     isConversing: boolean;
     setIsConversing: (isConversing: boolean) => void;
     conversationController: React.MutableRefObject<AbortController | null>;
 }
 
-const PersonaChatInterface: React.FC<PersonaChatInterfaceProps> = ({ personaPromptA, personaNameA, isEnabledA, personaPromptB, personaNameB, isEnabledB, apiKey, modelName, isConversing, setIsConversing, conversationController }) => {
+const PersonaChatInterface: React.FC<PersonaChatInterfaceProps> = ({ personaPromptA, personaNameA, isEnabledA, selectedIsmA, personaPromptB, personaNameB, isEnabledB, selectedIsmB, apiKey, modelName, personaParameters, isConversing, setIsConversing, conversationController }) => {
     const [activeChat, setActiveChat] = useState<'A' | 'B'>('A');
     const [historyA, setHistoryA] = useState<ChatMessage[]>([]);
     const [historyB, setHistoryB] = useState<ChatMessage[]>([]);
@@ -207,6 +214,7 @@ const PersonaChatInterface: React.FC<PersonaChatInterfaceProps> = ({ personaProm
     const currentPersonaPrompt = activeChat === 'A' ? personaPromptA : personaPromptB;
     const currentPersonaName = activeChat === 'A' ? personaNameA : personaNameB;
     const isCurrentEnabled = activeChat === 'A' ? isEnabledA : isEnabledB;
+    const currentCode = activeChat === 'A' ? selectedIsmA : selectedIsmB;
 
     const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -224,7 +232,7 @@ const PersonaChatInterface: React.FC<PersonaChatInterfaceProps> = ({ personaProm
         setError('');
 
         try {
-            const { thinking, reply } = await chatWithPersona(currentPersonaPrompt, newHistory, messageToSend, apiKey, modelName, controller.signal);
+            const { thinking, reply } = await chatWithPersona(currentPersonaPrompt, newHistory, messageToSend, apiKey, modelName, controller.signal, currentCode, personaParameters);
             if (controller.signal.aborted) return;
             setHistory(prev => [...prev, { role: 'model', content: reply, thinking }]);
         } catch (err) {
@@ -260,7 +268,7 @@ const PersonaChatInterface: React.FC<PersonaChatInterfaceProps> = ({ personaProm
             </div>
              {!isEnabledA && !isEnabledB ? (
                 <div className="flex-grow flex items-center justify-center text-center text-gray-400 px-4">
-                    <p>在左侧生成至少一个人格后，<br />即可在此处与其进行对话。</p>
+                    <p>在左侧选择并生成至少一个人格后，<br />即可在此处与其进行对话。</p>
                 </div>
             ) : (
                 <>
@@ -322,9 +330,9 @@ const PersonaChatInterface: React.FC<PersonaChatInterfaceProps> = ({ personaProm
 // --- Persona Configuration Component ---
 interface PersonaConfigProps {
   id: 'A' | 'B';
-  successfulReports: ProcessedFileResult[];
-  selectedIsm: string;
-  setSelectedIsm: (ism: string) => void;
+  allItems: PhilosophyItem[];
+  selectedIsm: string; // This is now a philosophy 'code'
+  setSelectedIsm: (code: string) => void;
   isLoading: boolean;
   personaPrompt: string;
   error: string;
@@ -333,42 +341,36 @@ interface PersonaConfigProps {
   copySuccess: string;
 }
 
-const PersonaConfig: React.FC<PersonaConfigProps> = ({ id, successfulReports, selectedIsm, setSelectedIsm, isLoading, personaPrompt, error, onGenerate, onCopyToClipboard, copySuccess }) => {
+const PersonaConfig: React.FC<PersonaConfigProps> = ({ id, allItems, selectedIsm, setSelectedIsm, isLoading, personaPrompt, error, onGenerate, onCopyToClipboard, copySuccess }) => {
   const colorClass = id === 'A' ? 'cyan' : 'amber';
   return (
     <div className={`bg-gray-800/50 p-4 rounded-lg border border-gray-700 space-y-4 border-l-4 border-${colorClass}-500`}>
       <h2 className={`text-xl font-semibold text-${colorClass}-400`}>人格 {id} 配置</h2>
       
-      {successfulReports.length === 0 ? (
-        <p className="text-sm text-gray-400 text-center py-4">
-          请先在“文稿处理系统”成功处理文稿。
-        </p>
-      ) : (
-        <>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">选择主义</label>
-            <select
-              value={selectedIsm}
-              onChange={(e) => setSelectedIsm(e.target.value)}
-              className="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            >
-              <option value="">-- 选择一个已分析的主义 --</option>
-              {successfulReports.map(report => (
-                <option key={report.fileName} value={report.fileName}>
-                  [{report.code}] {report.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button
-            onClick={onGenerate}
-            disabled={isLoading || !selectedIsm}
-            className={`w-full flex items-center justify-center gap-2 bg-${colorClass}-600 hover:bg-${colorClass}-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg transition-colors`}
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-1">选择主义</label>
+          <select
+            value={selectedIsm}
+            onChange={(e) => setSelectedIsm(e.target.value)}
+            className="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-cyan-500"
           >
-            {isLoading ? <><LoadingIcon /> 正在生成...</> : <><PersonaIcon /> 生成人格 {id} 提示词</>}
-          </button>
-        </>
-      )}
+            <option value="">-- 从索引中选择一个主义 --</option>
+            {allItems.map(item => (
+              <option key={item.code} value={item.code}>
+                [{item.code}] {item.name}
+              </option>
+            ))}
+          </select>
+           <p className="text-xs text-gray-500 mt-1">提示：处理过的文稿会为对应主义提供更详细的人格数据。</p>
+        </div>
+        <button
+          onClick={onGenerate}
+          disabled={isLoading || !selectedIsm}
+          className={`w-full flex items-center justify-center gap-2 bg-${colorClass}-600 hover:bg-${colorClass}-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg transition-colors`}
+        >
+          {isLoading ? <><LoadingIcon /> 正在生成...</> : <><PersonaIcon /> 生成人格 {id} 提示词</>}
+        </button>
+
       {error && <p className="text-sm text-red-400 bg-red-900/30 p-2 rounded-md">{error}</p>}
       
       {isLoading && (
@@ -409,16 +411,17 @@ interface PersonaExtractionProps {
   apiKey: string;
   modelName: string;
   prompts: PromptTemplates;
+  personaParameters: PersonaParameterConfig;
 }
 
-const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports, apiKey, modelName, prompts }) => {
-  const [selectedIsmA, setSelectedIsmA] = useState<string>('');
+const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports, apiKey, modelName, prompts, personaParameters }) => {
+  const [selectedIsmA, setSelectedIsmA] = useState<string>(''); // Stores philosophy code
   const [personaPromptA, setPersonaPromptA] = useState<string>('');
   const [isLoadingA, setIsLoadingA] = useState<boolean>(false);
   const [errorA, setErrorA] = useState<string>('');
   const [copySuccessA, setCopySuccessA] = useState<string>('');
 
-  const [selectedIsmB, setSelectedIsmB] = useState<string>('');
+  const [selectedIsmB, setSelectedIsmB] = useState<string>(''); // Stores philosophy code
   const [personaPromptB, setPersonaPromptB] = useState<string>('');
   const [isLoadingB, setIsLoadingB] = useState<boolean>(false);
   const [errorB, setErrorB] = useState<string>('');
@@ -432,20 +435,20 @@ const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports,
   const conversationController = useRef<AbortController | null>(null);
 
   const successfulReports = useMemo(() => {
-    return processedReports.filter(r => r.status === 'success');
+    return processedReports.filter(r => r.status === 'success' && r.analysis);
   }, [processedReports]);
 
-  const personaNameA = useMemo(() => successfulReports.find(r => r.fileName === selectedIsmA)?.name, [successfulReports, selectedIsmA]);
-  const personaNameB = useMemo(() => successfulReports.find(r => r.fileName === selectedIsmB)?.name, [successfulReports, selectedIsmB]);
+  const personaNameA = useMemo(() => philosophyIndex.find(p => p.code === selectedIsmA)?.name, [selectedIsmA]);
+  const personaNameB = useMemo(() => philosophyIndex.find(p => p.code === selectedIsmB)?.name, [selectedIsmB]);
 
   const handleGenerate = async (personaId: 'A' | 'B') => {
-    const selectedIsm = personaId === 'A' ? selectedIsmA : selectedIsmB;
+    const selectedCode = personaId === 'A' ? selectedIsmA : selectedIsmB;
     const setIsLoading = personaId === 'A' ? setIsLoadingA : setIsLoadingB;
     const setError = personaId === 'A' ? setErrorA : setErrorB;
     const setPersonaPrompt = personaId === 'A' ? setPersonaPromptA : setPersonaPromptB;
     const setCopySuccess = personaId === 'A' ? setCopySuccessA : setCopySuccessB;
 
-    if (!selectedIsm) {
+    if (!selectedCode) {
       setError('请选择一个主义以提取人格。');
       return;
     }
@@ -454,10 +457,11 @@ const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports,
       return;
     }
 
-    if (!generationController.current) {
-        generationController.current = new AbortController();
+    if (generationController.current) {
+        generationController.current.abort();
     }
-    const signal = generationController.current.signal;
+    const controller = new AbortController();
+    generationController.current = controller;
     
     setIsLoading(true);
     setError('');
@@ -465,14 +469,15 @@ const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports,
     setCopySuccess('');
 
     try {
-      const reportData = successfulReports.find(r => r.fileName === selectedIsm);
-      if (!reportData || !reportData.report) throw new Error('无法找到选定主义的报告内容。');
-
-      const item = philosophyIndex.find(p => p.code === reportData.code);
+      const item = philosophyIndex.find(p => p.code === selectedCode);
       if (!item) throw new Error('无法在索引中找到选定主义的条目。');
+      
+      // Optionally find the analysis data if a report has been processed
+      const reportData = successfulReports.find(r => r.code === selectedCode);
+      const analysis = reportData?.analysis; // This will be undefined if no report is found
 
-      const prompt = await generatePersonaPrompt(item, reportData.report, apiKey, modelName, prompts.personaSystem, prompts.personaUser, signal);
-      if (signal.aborted) return;
+      const prompt = await generatePersonaPrompt(item, analysis, apiKey, modelName, prompts, controller.signal);
+      if (controller.signal.aborted) return;
       setPersonaPrompt(prompt);
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {
@@ -483,6 +488,7 @@ const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports,
       }
     } finally {
       setIsLoading(false);
+      generationController.current = null;
     }
   };
   
@@ -523,7 +529,7 @@ const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports,
       <div className="space-y-6">
         <PersonaConfig 
           id="A"
-          successfulReports={successfulReports}
+          allItems={philosophyIndex}
           selectedIsm={selectedIsmA}
           setSelectedIsm={setSelectedIsmA}
           isLoading={isLoadingA}
@@ -558,7 +564,7 @@ const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports,
 
         <PersonaConfig 
           id="B"
-          successfulReports={successfulReports}
+          allItems={philosophyIndex}
           selectedIsm={selectedIsmB}
           setSelectedIsm={setSelectedIsmB}
           isLoading={isLoadingB}
@@ -597,10 +603,13 @@ const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports,
                 key={`${selectedIsmA}-${selectedIsmB}`}
                 personaPromptA={personaPromptA}
                 personaNameA={personaNameA || '未选定'}
+                selectedIsmA={selectedIsmA}
                 personaPromptB={personaPromptB}
                 personaNameB={personaNameB || '未选定'}
+                selectedIsmB={selectedIsmB}
                 apiKey={apiKey}
                 modelName={modelName}
+                personaParameters={personaParameters}
                 isEnabled={!!personaPromptA && !!personaPromptB}
                 isConversing={isConversing}
                 setIsConversing={setIsConversing}
@@ -611,11 +620,14 @@ const PersonaExtraction: React.FC<PersonaExtractionProps> = ({ processedReports,
                 personaPromptA={personaPromptA}
                 personaNameA={personaNameA || '未选定'}
                 isEnabledA={!!personaPromptA}
+                selectedIsmA={selectedIsmA}
                 personaPromptB={personaPromptB}
                 personaNameB={personaNameB || '未选定'}
                 isEnabledB={!!personaPromptB}
+                selectedIsmB={selectedIsmB}
                 apiKey={apiKey}
                 modelName={modelName}
+                personaParameters={personaParameters}
                 isConversing={isConversing}
                 setIsConversing={setIsConversing}
                 conversationController={conversationController}
@@ -640,6 +652,7 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [prompts, setPrompts] = useState<PromptTemplates>(defaultPrompts);
   const [concurrencyLimit, setConcurrencyLimit] = useState<number>(2);
+  const [personaParameters, setPersonaParameters] = useState<PersonaParameterConfig>(defaultPersonaParameters);
 
   const handleProcessingComplete = useCallback((newResult: ProcessedFileResult) => {
     setResults(prev => {
@@ -701,6 +714,7 @@ const App: React.FC = () => {
           apiKey={apiKey}
           modelName={modelName}
           prompts={prompts}
+          personaParameters={personaParameters}
         />;
       default:
         return null;
@@ -786,6 +800,8 @@ const App: React.FC = () => {
         onSavePrompts={setPrompts}
         concurrencyLimit={concurrencyLimit}
         setConcurrencyLimit={setConcurrencyLimit}
+        personaParameters={personaParameters}
+        setPersonaParameters={setPersonaParameters}
       />
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { PromptTemplates } from '../types';
+import { PromptTemplates, PersonaParameterConfig } from '../types';
 import { defaultPrompts } from '../prompts';
+import { defaultPersonaParameters } from '../data/personaParameters';
 import { CloseIcon } from './Icons';
 
 interface SettingsModalProps {
@@ -14,43 +15,72 @@ interface SettingsModalProps {
   onSavePrompts: (newPrompts: PromptTemplates) => void;
   concurrencyLimit: number;
   setConcurrencyLimit: (limit: number) => void;
+  personaParameters: PersonaParameterConfig;
+  setPersonaParameters: (config: PersonaParameterConfig) => void;
 }
 
-type ActiveTab = 'general' | 'philosophy' | 'comprehensive';
+type ActiveTab = 'general' | 'philosophy' | 'comprehensive' | 'personaParams';
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
   isOpen, 
   onClose, 
   apiKey, setApiKey, 
   modelName, setModelName, 
-  prompts, 
-  onSavePrompts,
-  concurrencyLimit,
-  setConcurrencyLimit
+  prompts, onSavePrompts,
+  concurrencyLimit, setConcurrencyLimit,
+  personaParameters, setPersonaParameters
 }) => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('general');
   const [editablePrompts, setEditablePrompts] = useState<PromptTemplates>(prompts);
+  const [editableParams, setEditableParams] = useState<PersonaParameterConfig>(personaParameters);
+  const [selectedPrefix, setSelectedPrefix] = useState<string>('default');
+  const [newPrefix, setNewPrefix] = useState<string>('');
+
 
   useEffect(() => {
     if (isOpen) {
       setEditablePrompts(prompts);
+      setEditableParams(personaParameters);
+      setSelectedPrefix('default');
     }
-  }, [isOpen, prompts]);
+  }, [isOpen, prompts, personaParameters]);
 
   if (!isOpen) return null;
 
   const handleSave = () => {
     onSavePrompts(editablePrompts);
-    // API Key, Model Name, and Concurrency are saved directly via their state setters.
+    setPersonaParameters(editableParams);
     onClose();
   };
   
-  const handleResetPrompts = () => {
+  const handleReset = () => {
     setEditablePrompts(defaultPrompts);
+    setEditableParams(defaultPersonaParameters);
   }
 
   const handlePromptChange = (key: keyof PromptTemplates, value: string) => {
     setEditablePrompts(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleParamChange = (prefix: string, field: keyof typeof editableParams[string], value: number) => {
+    setEditableParams(prev => ({
+        ...prev,
+        [prefix]: {
+            ...prev[prefix],
+            [field]: value
+        }
+    }));
+  };
+
+  const handleAddNewPrefix = () => {
+    if (newPrefix && !editableParams[newPrefix]) {
+        setEditableParams(prev => ({
+            ...prev,
+            [newPrefix]: { ...prev.default } // Initialize with default values
+        }));
+        setSelectedPrefix(newPrefix);
+        setNewPrefix('');
+    }
   };
 
   const renderPromptEditor = (title: string, description: string, promptKey: keyof PromptTemplates) => (
@@ -64,6 +94,34 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       />
     </div>
   );
+
+  const renderPersonaParamsEditor = () => {
+    const currentParams = editableParams[selectedPrefix];
+    if (!currentParams) return null;
+
+    return (
+        <div className="bg-gray-700/50 p-4 rounded-lg">
+            <h4 className="text-lg font-semibold text-gray-200 mb-3">编辑前缀: <span className="font-mono text-cyan-400">{selectedPrefix}</span></h4>
+            <div className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">温度 (Temperature): <span className="font-bold text-cyan-400">{currentParams.temperature.toFixed(2)}</span></label>
+                    <input type="range" min="0" max="1" step="0.05" value={currentParams.temperature} onChange={e => handleParamChange(selectedPrefix, 'temperature', parseFloat(e.target.value))} className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-cyan-500"/>
+                    <p className="text-xs text-gray-500 mt-1">控制随机性。值越高，回答越具创造性和多样性。</p>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">P值 (Top P): <span className="font-bold text-cyan-400">{currentParams.topP.toFixed(2)}</span></label>
+                    <input type="range" min="0" max="1" step="0.05" value={currentParams.topP} onChange={e => handleParamChange(selectedPrefix, 'topP', parseFloat(e.target.value))} className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-cyan-500"/>
+                    <p className="text-xs text-gray-500 mt-1">控制核心采样。值越低，回答越保守和确定。</p>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">上下文轮次 (Max History): <span className="font-bold text-cyan-400">{currentParams.maxHistoryTurns}</span></label>
+                    <input type="range" min="1" max="20" step="1" value={currentParams.maxHistoryTurns} onChange={e => handleParamChange(selectedPrefix, 'maxHistoryTurns', parseInt(e.target.value, 10))} className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-cyan-500"/>
+                    <p className="text-xs text-gray-500 mt-1">AI能“记住”的对话轮次（1轮=1次提问+1次回答）。</p>
+                </div>
+            </div>
+        </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -84,6 +142,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               <button onClick={() => setActiveTab('general')} className={`py-2 px-3 text-sm font-medium rounded-t-md ${activeTab === 'general' ? 'bg-gray-700 text-cyan-400' : 'text-gray-400 hover:bg-gray-700/50'}`}>通用设置</button>
               <button onClick={() => setActiveTab('philosophy')} className={`py-2 px-3 text-sm font-medium rounded-t-md ${activeTab === 'philosophy' ? 'bg-gray-700 text-cyan-400' : 'text-gray-400 hover:bg-gray-700/50'}`}>主义主义文稿</button>
               <button onClick={() => setActiveTab('comprehensive')} className={`py-2 px-3 text-sm font-medium rounded-t-md ${activeTab === 'comprehensive' ? 'bg-gray-700 text-cyan-400' : 'text-gray-400 hover:bg-gray-700/50'}`}>综合文稿</button>
+              <button onClick={() => setActiveTab('personaParams')} className={`py-2 px-3 text-sm font-medium rounded-t-md ${activeTab === 'personaParams' ? 'bg-gray-700 text-cyan-400' : 'text-gray-400 hover:bg-gray-700/50'}`}>人格化参数</button>
             </nav>
           </div>
           
@@ -145,12 +204,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               <h3 className="text-xl font-semibold text-gray-100 mb-2">提示词编辑: 主义主义文稿</h3>
               {renderPromptEditor('第1轮: 系统提示词', '定义AI在结构化分析阶段的核心角色和规则。', 'analysisSystem')}
               {renderPromptEditor('第1輪: 用户提示词模板', '用于为每个哲学论域生成具体分析指令的模板。可用占位符: {{domainName}}, {{philosophyName}}, {{philosophyCode}}, {{domainTerm}}, {{movementPattern}}, {{textContent}}, {{domainKey}}', 'analysisUser')}
-              {renderPromptEditor('第2轮: 系统提示词', '定义AI在综合与深化阶段的核心角色和规则。', 'reportSystem')}
-              {renderPromptEditor('第2轮: 用户提示词模板', '用于为每个哲学论域生成报告章节的模板。可用占位符: {{philosophyName}}, {{philosophyCode}}, {{domainName}}, {{domainKey}}, {{domainAnalysis}}, {{textContent}}, {{domainTerm}}, {{finalSummary}}, {{developmentalLink}}', 'reportUser')}
+              {renderPromptEditor('第2轮: 系统提示词', '【已弃用】定义AI在综合与深化阶段的核心角色和规则。', 'reportSystem')}
+              {renderPromptEditor('第2轮: 用户提示词模板', '【已弃用】用于为每个哲学论域生成报告章节的模板。', 'reportUser')}
               {renderPromptEditor('拼拼乐: 系统提示词', '定义AI在进行对比分析时的核心角色和规则。', 'comparisonSystem')}
               {renderPromptEditor('拼拼乐: 用户提示词模板', '用于生成对比分析指令的模板。可用占位符: {{itemACode}}, ..., {{reportB}}', 'comparisonUser')}
-              {renderPromptEditor('人格提取: 系统提示词', '定义AI在将哲学分析转化为可交互人格时的元角色和规则。', 'personaSystem')}
-              {renderPromptEditor('人格提取: 用户提示词模板', '用于生成完整人格提示词的模板。可用占位符: {{philosophyName}}, {{philosophyCode}}, {{ontology}}, {{epistemology}}, {{teleology}}, {{representative}}, {{report}}', 'personaUser')}
+              <hr className="my-6 border-gray-600"/>
+              <h3 className="text-xl font-semibold text-gray-100 mb-2">人格提取提示词</h3>
+              {renderPromptEditor('人格提取: 系统提示词', '为AI定义扮演哲学人格时的元角色（演员、思想家），该提示词在“思考”和“回答”两个阶段都会使用。', 'personaSystem')}
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                <div>
+                  {renderPromptEditor('思考模板 (前缀1-)', '基于场域论和本体论，指导AI如何针对用户输入进行“直接反应”式的思考。', 'personaThinking_prefix1')}
+                  {renderPromptEditor('思考模板 (前缀2-)', '基于场域论和本体论，指导AI如何进行“分析性”的思考。', 'personaThinking_prefix2')}
+                  {renderPromptEditor('思考模板 (前缀3-)', '基于场域论和本体论，指导AI如何进行“自我意识”的思考。', 'personaThinking_prefix3')}
+                  {renderPromptEditor('思考模板 (前缀4-)', '基于场域论和本体论，指导AI如何进行“多维辩证”的思考。', 'personaThinking_prefix4')}
+                </div>
+                 <div>
+                  {renderPromptEditor('回答模板 (前缀1-)', '基于认识论、目的论和“思考”阶段的结果，指导AI生成最终的对话。', 'personaReply_prefix1')}
+                  {renderPromptEditor('回答模板 (前缀2-)', '基于认识论、目的论和“思考”阶段的结果，指导AI生成最终的对话。', 'personaReply_prefix2')}
+                  {renderPromptEditor('回答模板 (前缀3-)', '基于认识论、目的论和“思考”阶段的结果，指导AI生成最终的对话。', 'personaReply_prefix3')}
+                  {renderPromptEditor('回答模板 (前缀4-)', '基于认识论、目的论和“思考”阶段的结果，指导AI生成最终的对话。', 'personaReply_prefix4')}
+                </div>
+              </div>
             </div>
           )}
 
@@ -167,10 +242,48 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                {renderPromptEditor('概念解释器: 用户提示词模板', '模板指令AI基于原文和父概念，解释用户输入的新概念。可用占位符: {{parentConceptName}}, {{parentConceptDefinition}}, {{parentConceptExplanation}}, {{newConcept}}, {{originalTextContent}}', 'explanationUser')}
             </div>
           )}
+
+          {activeTab === 'personaParams' && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-1 space-y-4">
+                    <div>
+                        <h3 className="text-lg font-semibold text-gray-100 mb-2">配置列表</h3>
+                        <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+                           {Object.keys(editableParams).sort().map(prefix => (
+                               <button 
+                                key={prefix} 
+                                onClick={() => setSelectedPrefix(prefix)}
+                                className={`w-full text-left px-3 py-2 text-sm rounded-md font-mono transition-colors ${selectedPrefix === prefix ? 'bg-cyan-600 text-white' : 'bg-gray-700 hover:bg-gray-600'}`}
+                                >
+                                 {prefix}
+                               </button>
+                           ))}
+                        </div>
+                    </div>
+                     <div>
+                        <h3 className="text-lg font-semibold text-gray-100 mb-2">添加新规则</h3>
+                        <div className="flex gap-2">
+                            <input 
+                                type="text"
+                                value={newPrefix}
+                                onChange={e => setNewPrefix(e.target.value)}
+                                placeholder="例如: 1-2-1"
+                                className="w-full bg-gray-900 border border-gray-600 rounded-md py-1 px-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                            />
+                            <button onClick={handleAddNewPrefix} className="px-3 py-1 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded-md flex-shrink-0">添加</button>
+                        </div>
+                     </div>
+                </div>
+                <div className="md:col-span-2">
+                    {renderPersonaParamsEditor()}
+                </div>
+            </div>
+          )}
+
         </div>
 
         <footer className="flex justify-between items-center p-4 border-t border-gray-700 bg-gray-800/50">
-            <button onClick={handleResetPrompts} className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white font-semibold rounded-md transition-colors">恢复默认提示词</button>
+            <button onClick={handleReset} className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white font-semibold rounded-md transition-colors">恢复默认设置</button>
             <div className="space-x-3">
                 <button onClick={onClose} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-md transition-colors">取消</button>
                 <button onClick={handleSave} className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-md transition-colors">保存并关闭</button>

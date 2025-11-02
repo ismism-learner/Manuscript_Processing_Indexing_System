@@ -59,11 +59,11 @@ export interface ProcessedFileResult {
 export interface PromptTemplates {
   analysisSystem: string;
   analysisUser: string;
-  // reportSystem and reportUser are no longer used for API calls
-  reportSystem: string;
-  reportUser: string;
+  reportSystem: string; // no longer used for API calls
+  reportUser: string; // no longer used for API calls
   comparisonSystem: string;
   comparisonUser: string;
+
   comprehensive_round0_system: string;
   comprehensive_round0_user: string;
   comprehensive_round1_system: string;
@@ -72,8 +72,18 @@ export interface PromptTemplates {
   comprehensive_round2_user: string;
   explanationSystem: string;
   explanationUser: string;
+
   personaSystem: string;
-  personaUser: string;
+
+  personaThinking_prefix1: string;
+  personaThinking_prefix2: string;
+  personaThinking_prefix3: string;
+  personaThinking_prefix4: string;
+
+  personaReply_prefix1: string;
+  personaReply_prefix2: string;
+  personaReply_prefix3: string;
+  personaReply_prefix4: string;
 }
 
 // From components/IndexViewer.tsx and hooks/usePhilosophyData.ts
@@ -109,4 +119,15 @@ export interface DisplayMessage {
   speaker: 'user' | 'personaA' | 'personaB';
   content: string;
   thinking?: string;
+}
+
+// For Persona Generation Parameters
+export interface PersonaParameters {
+  temperature: number;
+  topP: number;
+  maxHistoryTurns: number; // Number of turns (user + model = 1 turn)
+}
+
+export interface PersonaParameterConfig {
+  [codePrefix: string]: PersonaParameters;
 }
